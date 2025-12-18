@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reaction Time Test</title>
+    <style>
+        :root {
+            --color-idle: #2b87d1;
+            --color-wait: #ce2636;
+            --color-go: #4bdb6a;
+            --color-early: #f0ad4e;
+            --text-color: #ffffff;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--color-idle);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: background-color 0.1s ease;
+            cursor: pointer;
+        }
+
+        #game-area {
+            text-align: center;
+            padding: 20px;
+        }
+
+        h1 {
+            font-size: 80px;
+            margin: 0;
+            font-weight: 700;
+        }
+
+        p {
+            font-size: 24px;
+            margin-top: 10px;
+            opacity: 0.9;
+        }
+
+        /* Icon styling */
+        .icon {
+            font-size: 100px;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        /* Results History List */
+        #history {
+            position: absolute;
+            bottom: 30px;
+            text-align: center;
+            font-size: 16px;
+            opacity: 0.8;
+            list-style: none;
+            padding: 0;
+        }
+        
+        #history li {
+            margin: 5px 0;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 600px) {
+            h1 { font-size: 40px; }
+            .icon { font-size: 60px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-area">
+        <span class="icon" id="icon">⚡</span>
+        <h1 id="main-text">Reaction Test</h1>
+        <p id="sub-text">Click anywhere to start.</p>
+    </div>
+
+    <ul id="history"></ul>
+
+    <script>
+        // DOM Elements
+        const body = document.body;
+        const mainText = document.getElementById('main-text');
+        const subText = document.getElementById('sub-text');
+        const icon = document.getElementById('icon');
+        const historyList = document.getElementById('history');
+
+        // State Variables
+        let state = 'idle'; // idle, waiting, ready, result, early
+        let startTime = 0;
+        let timerId = null;
+        let attempts = [];
+
+        // Game Config
+        const MIN_DELAY = 2000; // 2 seconds
+        const MAX_DELAY = 5000; // 5 seconds
+
+        // Input Handling (Mouse & Touch)
+        document.addEventListener('mousedown', handleInput);
+        document.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent double firing on some devices
+            handleInput();
+        }, { passive: false });
+
+        // Key handler for Spacebar
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                handleInput();
+            }
+        });
+
+        function handleInput() {
+            switch (state) {
+                case 'idle':
+                case 'result':
+                case 'early':
+                    startWaiting();
+                    break;
+                case 'waiting':
+                    triggerEarly();
+                    break;
+                case 'ready':
+                    finish();
+                    break;
+            }
+        }
+
+        function startWaiting() {
+            state = 'waiting';
+            updateUI('Wait for Green...', '...', '🔴', 'var(--color-wait)');
+            
+            // Random delay between 2 and 5 seconds
+            const delay = Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
+            
+            clearTimeout(timerId);
+            timerId = setTimeout(() => {
+                setReady();
+            }, delay);
+        }
+
+        function setReady() {
+            if (state !== 'waiting') return; // Safety check
+            state = 'ready';
+            startTime = performance.now(); // High precision time
+            updateUI('CLICK!', 'Go! Go! Go!', '🟢', 'var(--color-go)');
+        }
+
+        function finish() {
+            const endTime = performance.now();
+            const reactionTime = Math.round(endTime - startTime);
+            state = 'result';
+            
+            updateUI(`${reactionTime} ms`, 'Click to keep going', '⏱️', 'var(--color-idle)');
+            saveHistory(reactionTime);
+        }
+
+        function triggerEarly() {
+            clearTimeout(timerId);
+            state = 'early';
+            updateUI('Too Soon!', 'Click to try again.', '⚠️', 'var(--color-early)');
+        }
+
+        function updateUI(main, sub, iconChar, color) {
+            mainText.innerText = main;
+            subText.innerText = sub;
+            icon.innerText = iconChar;
+            body.style.backgroundColor = color;
+        }
+
+        function saveHistory(time) {
+            attempts.unshift(time);
+            if (attempts.length > 5) attempts.pop(); // Keep last 5
+
+            // Render history
+            historyList.innerHTML = '';
+            attempts.forEach((t, index) => {
+                const li = document.createElement('li');
+                li.innerText = `${index === 0 ? 'Latest' : 'Previous'}: ${t} ms`;
+                if (index === 0) li.style.fontWeight = 'bold';
+                historyList.appendChild(li);
+            });
+        }
+    </script>
+</body>
+</html>
