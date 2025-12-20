@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Plinko - Fixed Physics</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --text-color: #ffffff;
+            --accent-color: #e94560;
+            --secondary-color: #0f3460;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.5rem;
+            text-shadow: 0 0 10px var(--accent-color);
+            letter-spacing: 2px;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid var(--secondary-color);
+        }
+
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #16213e, #1a1a2e);
+            cursor: crosshair;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+
+        .stat-box {
+            background: rgba(15, 52, 96, 0.8);
+            padding: 10px 20px;
+            border-radius: 20px;
+            margin-bottom: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        #tutorial {
+            position: absolute;
+            top: 60px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.5);
+            pointer-events: none;
+            font-size: 0.9rem;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>NEON PLINKO</h1>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="600" height="800"></canvas>
+        <div id="tutorial">Click to drop</div>
+        <div id="ui-layer">
+            <div class="stat-box">Score: <span id="score">0</span></div>
+        </div>
+    </div>
+
+<script>
+/**
+ * PLINKO GAME ENGINE - STRICT LATTICE VERSION
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+
+// --- Configuration ---
+const CONFIG = {
+    gravity: 0.25,
+    friction: 0.98,
+    elasticity: 0.6, // Bounciness
+    pegRadius: 6,
+    ballRadius: 10,  // Increased slightly to ensure collisions
+    pegRows: 14,
+    pegCols: 11,     // Fixed columns for calculation
+    colors: {
+        peg: '#4a5b7c',
+        ball: '#e94560',
+        scoreZone: ['#ff0055', '#ff5500', '#ffcc00', '#33cc33', '#3399ff', '#33cc33', '#ffcc00', '#ff5500', '#ff0055'],
+        text: '#fff'
+    },
+    multipliers: [100, 50, 20, 5, 1, 5, 20, 50, 100]
+};
+
+// --- Game State ---
+let balls = [];
+let pegs = [];
+let zones = [];
+let particles = [];
+let score = 0;
+let mouseX = canvas.width / 2;
+
+// --- Physics Classes ---
+
+class Vector {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { return new Vector(this.x + v.x, this.y + v.y); }
+    sub(v) { return new Vector(this.x - v.x, this.y - v.y); }
+    mult(n) { return new Vector(this.x * n, this.y * n); }
+    mag() { return Math.sqrt(this.x * this.x + this.y * this.y); }
+    normalize() {
+        let m = this.mag();
+        return m === 0 ? new Vector(0,0) : new Vector(this.x / m, this.y / m);
+    }
+    dot(v) { return this.x * v.x + this.y * v.y; }
+}
+
+class Ball {
+    constructor(x, y) {
+        this.pos = new Vector(x, y);
+        // Tiny random X velocity ensures it doesn't balance perfectly on a peg tip
+        this.vel = new Vector((Math.random() - 0.5) * 0.1, 0); 
+        this.r = CONFIG.ballRadius;
+        this.active = true;
+        this.color = `hsl(${Math.random() * 40 + 330}, 100%, 60%)`;
+    }
+
+    update() {
+        // Apply Gravity
+        this.vel.y += CONFIG.gravity;
+        this.vel.mult(CONFIG.friction);
+        this.pos = this.pos.add(this.vel);
+
+        // Wall Collisions
+        if (this.pos.x < this.r) {
+            this.pos.x = this.r;
+            this.vel.x *= -0.6;
+        } else if (this.pos.x > canvas.width - this.r) {
+            this.pos.x = canvas.width - this.r;
+            this.vel.x *= -0.6;
+        }
+
+        // Deactivate if out of bounds
+        if (this.pos.y > canvas.height + 50) {
+            this.active = false;
+        }
+    }
+
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.pos.x, this.pos.y, this.r, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.closePath();
+        
+        // Highlight
+        ctx.beginPath();
+        ctx.arc(this.pos.x - 3, this.pos.y - 3, this.r/3, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.4)";
+        ctx.fill();
+        ctx.closePath();
+    }
+}
+
+class Peg {
+    constructor(x, y) {
+        this.pos = new Vector(x, y);
+        this.r = CONFIG.pegRadius;
+    }
+
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.pos.x, this.pos.y, this.r, 0, Math.PI * 2);
+        ctx.fillStyle = CONFIG.colors.peg;
+        ctx.fill();
+        ctx.closePath();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.pos = new Vector(x, y);
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 3 + 1;
+        this.vel = new Vector(Math.cos(angle) * speed, Math.sin(angle) * speed);
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.02;
+        this.color = color;
+    }
+    
+    update() {
+        this.pos = this.pos.add(this.vel);
+        this.life -= this.decay;
+        this.vel.y += 0.1; // gravity for particles
+    }
+    
+    draw() {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.pos.x, this.pos.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+// --- Initialization ---
+
+function init() {
+    createPegsStrict();
+    createZones();
+    
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        // Clamp mouse
+        if(mouseX < 20) mouseX = 20;
+        if(mouseX > canvas.width - 20) mouseX = canvas.width - 20;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+        spawnBall(mouseX, 30);
+    });
+    
+    loop();
+}
+
+function createPegsStrict() {
+    pegs = [];
+    const rows = CONFIG.pegRows;
+    const colCount = CONFIG.pegCols; // e.g., 11
+    
+    // Calculate precise spacing
+    // We want margins on left/right so balls don't just ride the wall
+    const paddingX = 40;
+    const availableWidth = canvas.width - (paddingX * 2);
+    const spacingX = availableWidth / (colCount - 1); // Distance between pegs
+    const spacingY = spacingX * 0.9; // Slightly compressed vertically for better bounce
+    
+    const startY = 120; // First row Y position
+
+    for (let r = 0; r < rows; r++) {
+        const isOddRow = r % 2 !== 0;
+        
+        // Odd rows have 1 less peg and are shifted by half spacing
+        const colsInRow = isOddRow ? colCount - 1 : colCount;
+        const xOffset = isOddRow ? spacingX / 2 : 0;
+
+        for (let c = 0; c < colsInRow; c++) {
+            let x = paddingX + xOffset + (c * spacingX);
+            let y = startY + (r * spacingY);
+            pegs.push(new Peg(x, y));
+        }
+    }
+}
+
+function createZones() {
+    const zoneCount = CONFIG.multipliers.length;
+    const zoneWidth = canvas.width / zoneCount;
+    const zoneHeight = 60;
+    const y = canvas.height - zoneHeight;
+
+    for (let i = 0; i < zoneCount; i++) {
+        zones.push({
+            x: i * zoneWidth,
+            y: y,
+            w: zoneWidth,
+            h: zoneHeight,
+            val: CONFIG.multipliers[i],
+            color: CONFIG.colors.scoreZone[i]
+        });
+    }
+}
+
+function spawnBall(x, y) {
+    balls.push(new Ball(x, y));
+}
+
+function createExplosion(x, y, color) {
+    for(let i=0; i<12; i++) {
+        particles.push(new Particle(x, y, color));
+    }
+}
+
+// --- Physics Logic ---
+
+function resolveCollision(ball, peg) {
+    let collision = ball.pos.sub(peg.pos);
+    let distance = collision.mag();
+    let minDist = ball.r + peg.r;
+    
+    if (distance < minDist) {
+        // 1. Resolve Penetration
+        let overlap = minDist - distance;
+        let n = collision.normalize();
+        ball.pos = ball.pos.add(n.mult(overlap));
+
+        // 2. Reflect Velocity
+        let vDotN = ball.vel.dot(n);
+        if (vDotN < 0) {
+            let reflection = n.mult(2 * vDotN);
+            ball.vel = ball.vel.sub(reflection);
+            ball.vel = ball.vel.mult(CONFIG.elasticity);
+            
+            // 3. Chaos Factor
+            // Add slight randomness to prevent loops and make it feel more organic
+            ball.vel.x += (Math.random() - 0.5) * 0.2;
+        }
+    }
+}
+
+// --- Main Loop ---
+
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw Zones
+    zones.forEach(zone => {
+        ctx.fillStyle = zone.color;
+        ctx.fillRect(zone.x, zone.y, zone.w, zone.h);
+        
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.font = "bold 14px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(`${zone.val}x`, zone.x + zone.w/2, zone.y + 35);
+        
+        ctx.strokeStyle = "rgba(0,0,0,0.2)";
+        ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
+    });
+
+    // 2. Draw Pegs
+    pegs.forEach(peg => peg.draw());
+
+    // 3. Update Balls
+    for (let i = balls.length - 1; i >= 0; i--) {
+        let b = balls[i];
+        b.update();
+        
+        // Physics Loop - Check nearby pegs only (Optimization)
+        // Simple Grid-based Broadphase is overkill here, just AABB
+        for (let peg of pegs) {
+            let dx = b.pos.x - peg.pos.x;
+            let dy = b.pos.y - peg.pos.y;
+            // Bounding box check before square root
+            if (dx * dx + dy * dy < 1600) { // 40px^2
+                resolveCollision(b, peg);
+            }
+        }
+
+        // Scoring
+        if (b.pos.y > canvas.height - 60 && b.active) {
+            let colIndex = Math.floor(b.pos.x / (canvas.width / zones.length));
+            if (colIndex >= 0 && colIndex < zones.length) {
+                let multiplier = zones[colIndex].val;
+                let gained = multiplier;
+                score += gained;
+                scoreEl.innerText = score;
+                createExplosion(b.pos.x, b.pos.y, zones[colIndex].color);
+            }
+            b.active = false;
+        }
+
+        if (b.active) b.draw();
+        else balls.splice(i, 1);
+    }
+
+    // 4. Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.update();
+        p.draw();
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    // 5. Aim Indicator
+    ctx.beginPath();
+    ctx.arc(mouseX, 30, CONFIG.ballRadius, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(233, 69, 96, 0.4)";
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.setLineDash([5, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    requestAnimationFrame(loop);
+}
+
+// Start
+init();
+
+</script>
+</body>
+</html>
